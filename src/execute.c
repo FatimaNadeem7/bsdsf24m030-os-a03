@@ -1,7 +1,7 @@
 #include "shell.h"
-#include <fcntl.h>
 
-// Parse command arguments and identify redirection
+
+// Parse arguments and redirection
 int parse_command(char** tokens, int start, int end,
                   char** argv, char** input_file,
                   char** output_file) {
@@ -48,7 +48,8 @@ int parse_command(char** tokens, int start, int end,
     return argc;
 }
 
-// Apply input and output redirection
+
+// Apply redirection
 int apply_redirection(char* input_file, char* output_file) {
 
     int fd;
@@ -94,39 +95,37 @@ int apply_redirection(char* input_file, char* output_file) {
     return 0;
 }
 
-// Execute commands
-int execute(char* arglist[]) {
 
+// Execute command
+int execute(char** arglist, int background, char* command) {
+
+    int total = 0;
     int pipe_index = -1;
 
-    // Find pipe operator
-    for (int i = 0; arglist[i] != NULL; i++) {
+    while (arglist[total] != NULL) {
 
-        if (strcmp(arglist[i], "|") == 0) {
+        if (strcmp(arglist[total], "|") == 0) {
 
             if (pipe_index != -1) {
                 fprintf(stderr, "Only one pipe is supported.\n");
                 return -1;
             }
 
-            pipe_index = i;
+            pipe_index = total;
         }
+
+        total++;
     }
 
-    // Handle commands without a pipe
+
+    // Command without pipe
     if (pipe_index == -1) {
 
         char* argv[MAXARGS + 1];
         char* input_file;
         char* output_file;
 
-        int argc = 0;
-
-        while (arglist[argc] != NULL) {
-            argc++;
-        }
-
-        if (parse_command(arglist, 0, argc,
+        if (parse_command(arglist, 0, total,
                           argv, &input_file,
                           &output_file) < 0) {
             return -1;
@@ -151,13 +150,33 @@ int execute(char* arglist[]) {
             _exit(1);
         }
 
+        // Background execution
+        if (background) {
+
+            add_job(pid, command);
+            return 0;
+        }
+
+        // Foreground execution
         int status;
-        waitpid(pid, &status, 0);
+
+        while (waitpid(pid, &status, 0) < 0) {
+
+            if (errno != EINTR) {
+                perror("waitpid");
+                break;
+            }
+        }
 
         return 0;
     }
 
-    // Handle commands connected by a pipe
+
+    // Pipe handling
+    if (pipe_index == 0 || pipe_index == total - 1) {
+        fprintf(stderr, "Invalid pipe command.\n");
+        return -1;
+    }
 
     char* left_argv[MAXARGS + 1];
     char* right_argv[MAXARGS + 1];
@@ -171,12 +190,6 @@ int execute(char* arglist[]) {
                       left_argv, &left_input,
                       &left_output) < 0) {
         return -1;
-    }
-
-    int total = 0;
-
-    while (arglist[total] != NULL) {
-        total++;
     }
 
     if (parse_command(arglist, pipe_index + 1, total,
@@ -222,13 +235,18 @@ int execute(char* arglist[]) {
         _exit(1);
     }
 
+
     pid_t right_pid = fork();
 
     if (right_pid < 0) {
+
         perror("fork");
+
         close(fd[0]);
         close(fd[1]);
+
         waitpid(left_pid, NULL, 0);
+
         return -1;
     }
 
@@ -253,11 +271,19 @@ int execute(char* arglist[]) {
         _exit(1);
     }
 
-    // Parent process closes both pipe ends
     close(fd[0]);
     close(fd[1]);
 
-    // Wait for both child processes
+    // Background pipe: track both child processes
+    if (background) {
+
+        add_job(left_pid, command);
+        add_job(right_pid, command);
+
+        return 0;
+    }
+
+    // Foreground pipe: wait for both
     waitpid(left_pid, NULL, 0);
     waitpid(right_pid, NULL, 0);
 
