@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include "shell.h"
 #include <dirent.h>
 #include <limits.h>
@@ -344,5 +345,160 @@ char** shell_completion(const char* text, int start, int end) {
     }
 
     return rl_completion_matches(text, rl_filename_completion_function);
+}
+/* Shell variable storage */
+
+typedef struct Variable {
+    char *name;
+    char *value;
+    struct Variable *next;
+} Variable;
+
+static Variable *variable_list = NULL;
+
+
+/* Store or update a variable */
+
+void store_variable(char *name, char *value) {
+
+    Variable *current = variable_list;
+
+    while (current != NULL) {
+
+        if (strcmp(current->name, name) == 0) {
+
+            free(current->value);
+            current->value = strdup(value);
+            return;
+        }
+
+        current = current->next;
+    }
+
+    Variable *new_variable = malloc(sizeof(Variable));
+
+    if (new_variable == NULL) {
+        perror("malloc");
+        return;
+    }
+
+    new_variable->name = strdup(name);
+    new_variable->value = strdup(value);
+
+    new_variable->next = variable_list;
+    variable_list = new_variable;
+}
+
+
+/* Detect and process assignments */
+
+int variable_assignment(char *command) {
+
+    char *equals = strchr(command, '=');
+
+    if (equals == NULL)
+        return 0;
+
+    if (equals == command)
+        return 0;
+
+    for (char *p = command; p < equals; p++) {
+
+        if (isspace((unsigned char)*p))
+            return 0;
+    }
+
+    char *name = strndup(command, equals - command);
+
+    for (char *p = name; *p; p++) {
+
+        if (!(isalnum((unsigned char)*p) || *p == '_')) {
+            free(name);
+            return 0;
+        }
+    }
+
+    if (!(isalpha((unsigned char)name[0]) || name[0] == '_')) {
+        free(name);
+        return 0;
+    }
+
+    char *value = equals + 1;
+
+    while (isspace((unsigned char)*value))
+        value++;
+
+    size_t len = strlen(value);
+
+    if (len >= 2 &&
+        ((value[0] == '"' && value[len - 1] == '"') ||
+         (value[0] == '\'' && value[len - 1] == '\''))) {
+
+        value[len - 1] = '\0';
+        value++;
+    }
+
+    store_variable(name, value);
+
+    free(name);
+
+    return 1;
+}
+
+
+/* Expand variables such as $MSG */
+
+void expand_variables(char **arglist) {
+
+    for (int i = 0; arglist[i] != NULL; i++) {
+
+        if (arglist[i][0] != '$')
+            continue;
+
+        char *name = arglist[i] + 1;
+
+        Variable *current = variable_list;
+
+        while (current != NULL) {
+
+            if (strcmp(current->name, name) == 0) {
+
+                char *replacement = strdup(current->value);
+
+                if (replacement != NULL) {
+
+                    free(arglist[i]);
+                    arglist[i] = replacement;
+                }
+
+                break;
+            }
+
+            current = current->next;
+        }
+
+        if (current == NULL) {
+
+            free(arglist[i]);
+            arglist[i] = strdup("");
+        }
+    }
+}
+
+
+/* Display all stored variables */
+
+void print_variables(void) {
+
+    Variable *current = variable_list;
+
+    while (current != NULL) {
+
+        printf("%s=%s\n",
+               current->name,
+               current->value);
+
+        current = current->next;
+    }
 }
 

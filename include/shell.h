@@ -39,5 +39,7 @@ void add_job(pid_t pid, char* command);
 void remove_job(pid_t pid);
 void check_background_jobs(void);
 void print_jobs(void);
-
+int variable_assignment(char *command);
+void expand_variables(char **arglist);
+void print_variables(void);
 #endif
