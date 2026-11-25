@@ -19,4 +19,11 @@ char* read_cmd(char* prompt, FILE* fp);
 char** tokenize(char* cmdline);
 int execute(char** arglist);
 int handle_builtin(char** arglist);
+void add_history(const char* cmd);
+void print_history(void);
+char* get_history_command(int n);
+void add_history(const char* cmd);
+void print_history(void);
+char* get_history_command(int n);
+extern int history_count;
 #endif // SHELL_H
