@@ -1,7 +1,8 @@
+
 #include "shell.h"
 #include <dirent.h>
 #include <limits.h>
-// Convert command into arguments
+
 // Generate command completions
 char* command_generator(const char* text, int state) {
 
@@ -32,17 +33,7 @@ char* command_generator(const char* text, int state) {
         current_dir = strtok_r(path_copy, ":", &saveptr);
         builtin_index = 0;
     }
-// Handle command and filename completion
-char** shell_completion(const char* text, int start, int end) {
 
-    (void)end;
-
-    if (start == 0) {
-        return rl_completion_matches(text, command_generator);
-    }
-
-    return rl_completion_matches(text, rl_filename_completion_function);
-}
     // Complete built-in commands
     while (builtins[builtin_index] != NULL) {
 
@@ -93,53 +84,91 @@ char** shell_completion(const char* text, int start, int end) {
         current_dir = strtok_r(NULL, ":", &saveptr);
     }
 }
+
+// Handle command and filename completion
+char** shell_completion(const char* text, int start, int end) {
+
+    (void)end;
+
+    if (start == 0) {
+        return rl_completion_matches(text, command_generator);
+    }
+
+    return rl_completion_matches(text, rl_filename_completion_function);
+}
+
+// Tokenize command and recognize redirection and pipe operators
 char** tokenize(char* cmdline) {
 
     if (cmdline == NULL || cmdline[0] == '\0') {
         return NULL;
     }
 
-    char** arglist = (char**)malloc(sizeof(char*) * (MAXARGS + 1));
+    char** arglist = malloc(sizeof(char*) * (MAXARGS + 1));
+
+    if (arglist == NULL) {
+        perror("malloc failed");
+        return NULL;
+    }
 
     for (int i = 0; i < MAXARGS + 1; i++) {
-        arglist[i] = (char*)malloc(sizeof(char) * ARGLEN);
-        bzero(arglist[i], ARGLEN);
+
+        arglist[i] = calloc(ARGLEN, sizeof(char));
+
+        if (arglist[i] == NULL) {
+            perror("calloc failed");
+
+            for (int j = 0; j < i; j++) {
+                free(arglist[j]);
+            }
+
+            free(arglist);
+            return NULL;
+        }
     }
 
     char* cp = cmdline;
-    char* start;
-    int len;
     int argnum = 0;
 
     while (*cp != '\0' && argnum < MAXARGS) {
 
-        while (*cp == ' ' || *cp == '\t') {
+        // Skip spaces and tabs
+        if (*cp == ' ' || *cp == '\t') {
+            cp++;
+            continue;
+        }
+
+        // Recognize special operators
+        if (*cp == '<' || *cp == '>' || *cp == '|') {
+
+            arglist[argnum][0] = *cp;
+            arglist[argnum][1] = '\0';
+
+            cp++;
+            argnum++;
+            continue;
+        }
+
+        // Read normal command or argument
+        int len = 0;
+
+        while (*cp != '\0' &&
+               *cp != ' ' && *cp != '\t' &&
+               *cp != '<' && *cp != '>' && *cp != '|') {
+
+            if (len < ARGLEN - 1) {
+                arglist[argnum][len++] = *cp;
+            }
+
             cp++;
         }
 
-        if (*cp == '\0') {
-            break;
-        }
-
-        start = cp;
-        len = 0;
-
-        while (*cp != '\0' && *cp != ' ' && *cp != '\t') {
-            len++;
-            cp++;
-        }
-
-        if (len >= ARGLEN) {
-            len = ARGLEN - 1;
-        }
-
-        strncpy(arglist[argnum], start, len);
         arglist[argnum][len] = '\0';
-
         argnum++;
     }
 
     if (argnum == 0) {
+
         for (int i = 0; i < MAXARGS + 1; i++) {
             free(arglist[i]);
         }
@@ -149,9 +178,9 @@ char** tokenize(char* cmdline) {
     }
 
     arglist[argnum] = NULL;
+
     return arglist;
 }
-
 
 // Display command history using Readline
 void print_history(void) {
@@ -167,7 +196,6 @@ void print_history(void) {
         printf("%d  %s\n", history_base + i, entries[i]->line);
     }
 }
-
 
 // Handle built-in commands
 int handle_builtin(char** arglist) {
@@ -209,7 +237,6 @@ int handle_builtin(char** arglist) {
     else if (strcmp(arglist[0], "jobs") == 0) {
 
         printf("Job control not yet implemented.\n");
-
         return 1;
     }
 
@@ -217,10 +244,8 @@ int handle_builtin(char** arglist) {
     else if (strcmp(arglist[0], "history") == 0) {
 
         print_history();
-
         return 1;
     }
 
-    // Not a built-in command
     return 0;
 }
