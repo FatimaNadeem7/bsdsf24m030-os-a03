@@ -1,5 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Iinclude
+LDFLAGS = -lreadline
 
 TARGET = bin/psh
 
@@ -10,7 +11,7 @@ all: $(TARGET)
 
 $(TARGET): $(OBJ)
 	mkdir -p bin
-	$(CC) $(CFLAGS) -o $(TARGET) $(OBJ)
+	$(CC) $(CFLAGS) -o $(TARGET) $(OBJ) $(LDFLAGS)
 
 obj/%.o: src/%.c
 	mkdir -p obj

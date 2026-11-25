@@ -1,39 +1,98 @@
 #include "shell.h"
+#include <dirent.h>
+#include <limits.h>
+// Convert command into arguments
+// Generate command completions
+char* command_generator(const char* text, int state) {
 
-#define HISTORY_SIZE 20
+    static char* path_copy = NULL;
+    static char* saveptr;
+    static char* current_dir = NULL;
+    static DIR* dir = NULL;
 
-// History storage
-char* history[HISTORY_SIZE];
-int history_count = 0;
-int history_start = 0;
+    static const char* builtins[] = {
+        "exit", "cd", "help", "jobs", "history", NULL
+    };
 
+    static int builtin_index = 0;
 
-// Read command from user
-char* read_cmd(char* prompt, FILE* fp) {
-    printf("%s", prompt);
+    if (state == 0) {
 
-    char* cmdline = (char*)malloc(sizeof(char) * MAX_LEN);
-    int c, pos = 0;
+        if (dir != NULL) {
+            closedir(dir);
+            dir = NULL;
+        }
 
-    while ((c = getc(fp)) != EOF) {
-        if (c == '\n') break;
+        free(path_copy);
 
-        if (pos < MAX_LEN - 1) {
-            cmdline[pos++] = c;
+        char* path = getenv("PATH");
+        path_copy = strdup(path ? path : "");
+
+        saveptr = NULL;
+        current_dir = strtok_r(path_copy, ":", &saveptr);
+        builtin_index = 0;
+    }
+// Handle command and filename completion
+char** shell_completion(const char* text, int start, int end) {
+
+    (void)end;
+
+    if (start == 0) {
+        return rl_completion_matches(text, command_generator);
+    }
+
+    return rl_completion_matches(text, rl_filename_completion_function);
+}
+    // Complete built-in commands
+    while (builtins[builtin_index] != NULL) {
+
+        const char* name = builtins[builtin_index++];
+
+        if (strncmp(name, text, strlen(text)) == 0) {
+            return strdup(name);
         }
     }
 
-    if (c == EOF && pos == 0) {
-        free(cmdline);
-        return NULL;
+    // Search executable commands in PATH directories
+    while (1) {
+
+        if (dir == NULL) {
+
+            if (current_dir == NULL) {
+                return NULL;
+            }
+
+            dir = opendir(current_dir);
+
+            if (dir == NULL) {
+                current_dir = strtok_r(NULL, ":", &saveptr);
+                continue;
+            }
+        }
+
+        struct dirent* entry;
+
+        while ((entry = readdir(dir)) != NULL) {
+
+            if (strncmp(entry->d_name, text, strlen(text)) == 0) {
+
+                char fullpath[PATH_MAX];
+
+                snprintf(fullpath, sizeof(fullpath),
+                         "%s/%s", current_dir, entry->d_name);
+
+                if (access(fullpath, X_OK) == 0) {
+                    return strdup(entry->d_name);
+                }
+            }
+        }
+
+        closedir(dir);
+        dir = NULL;
+
+        current_dir = strtok_r(NULL, ":", &saveptr);
     }
-
-    cmdline[pos] = '\0';
-    return cmdline;
 }
-
-
-// Convert command into arguments
 char** tokenize(char* cmdline) {
 
     if (cmdline == NULL || cmdline[0] == '\0') {
@@ -94,49 +153,19 @@ char** tokenize(char* cmdline) {
 }
 
 
-// Add command to history
-void add_history(const char* cmd) {
-
-    int index;
-
-    if (history_count < HISTORY_SIZE) {
-        index = (history_start + history_count) % HISTORY_SIZE;
-        history_count++;
-    }
-    else {
-        index = history_start;
-
-        free(history[index]);
-
-        history_start = (history_start + 1) % HISTORY_SIZE;
-    }
-
-    history[index] = strdup(cmd);
-}
-
-
-// Display command history
+// Display command history using Readline
 void print_history(void) {
 
-    for (int i = 0; i < history_count; i++) {
+    HIST_ENTRY **entries = history_list();
 
-        int index = (history_start + i) % HISTORY_SIZE;
-
-        printf("%d  %s\n", i + 1, history[index]);
-    }
-}
-
-
-// Retrieve a command from history
-char* get_history_command(int n) {
-
-    if (n < 1 || n > history_count) {
-        return NULL;
+    if (entries == NULL) {
+        printf("No commands in history.\n");
+        return;
     }
 
-    int index = (history_start + n - 1) % HISTORY_SIZE;
-
-    return history[index];
+    for (int i = 0; entries[i] != NULL; i++) {
+        printf("%d  %s\n", history_base + i, entries[i]->line);
+    }
 }
 
 

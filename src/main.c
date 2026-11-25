@@ -1,41 +1,37 @@
 #include "shell.h"
 
 int main() {
+
     char* cmdline;
     char** arglist;
 
-    while ((cmdline = read_cmd(PROMPT, stdin)) != NULL) {
+    // Initialize Readline history
+    using_history();
+// Enable command and filename Tab completion
+rl_attempted_completion_function = shell_completion;
+    while ((cmdline = readline(PROMPT)) != NULL) {
 
-        // Check whether the user entered a history command (!n)
+        // Handle history command (!n)
         if (cmdline[0] == '!') {
 
             char* endptr;
             long n = strtol(cmdline + 1, &endptr, 10);
 
-            // Check if the entered history number is valid
             if (cmdline[1] == '\0' || *endptr != '\0' || n < 1) {
                 printf("Invalid history command.\n");
                 free(cmdline);
                 continue;
             }
 
-            // Retrieve the requested command
-            if (n > history_count) {
+            HIST_ENTRY* entry = history_get((int)n);
+
+            if (entry == NULL) {
                 printf("History: command not found.\n");
                 free(cmdline);
                 continue;
             }
 
-            char* previous_command = get_history_command((int)n);
-
-            if (previous_command == NULL) {
-                printf("History: command not found.\n");
-                free(cmdline);
-                continue;
-            }
-
-            // Replace !n with the actual previous command
-            char* new_cmdline = strdup(previous_command);
+            char* new_cmdline = strdup(entry->line);
 
             free(cmdline);
             cmdline = new_cmdline;
@@ -43,7 +39,7 @@ int main() {
             printf("%s\n", cmdline);
         }
 
-        // Save the actual command in history
+        // Add non-empty commands to Readline history
         if (cmdline[0] != '\0') {
             add_history(cmdline);
         }
@@ -55,7 +51,7 @@ int main() {
                 execute(arglist);
             }
 
-            // Free allocated argument memory
+            // Free argument memory
             for (int i = 0; arglist[i] != NULL; i++) {
                 free(arglist[i]);
             }
