@@ -25,19 +25,16 @@ typedef struct {
     char command[MAX_LEN];
 } Job;
 
-// Tokenization and execution
 char** tokenize(char* cmdline);
-int execute(char** arglist, int background, char* command);
-void execute_line(char* cmdline);
 
-// Built-in commands
+int execute(char** arglist, int background, char* command);
+int execute_line(char* cmdline);
+
 int handle_builtin(char** arglist);
 void print_history(void);
 
-// Readline autocomplete
 char** shell_completion(const char* text, int start, int end);
 
-// Background jobs
 void add_job(pid_t pid, char* command);
 void remove_job(pid_t pid);
 void check_background_jobs(void);

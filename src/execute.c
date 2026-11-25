@@ -1,291 +1,272 @@
 #include "shell.h"
 
-
-// Parse arguments and redirection
-int parse_command(char** tokens, int start, int end,
-                  char** argv, char** input_file,
-                  char** output_file) {
-
-    int argc = 0;
+void parse_command(
+    char** tokens,
+    char** args,
+    char** input_file,
+    char** output_file
+) {
+    int j = 0;
 
     *input_file = NULL;
     *output_file = NULL;
 
-    for (int i = start; i < end; i++) {
+    for (int i = 0; tokens[i] != NULL; i++) {
 
         if (strcmp(tokens[i], "<") == 0) {
-
-            if (i + 1 >= end || *input_file != NULL) {
-                fprintf(stderr, "Invalid input redirection.\n");
-                return -1;
+            if (tokens[i + 1] != NULL) {
+                *input_file = tokens[++i];
             }
-
-            *input_file = tokens[++i];
         }
 
         else if (strcmp(tokens[i], ">") == 0) {
-
-            if (i + 1 >= end || *output_file != NULL) {
-                fprintf(stderr, "Invalid output redirection.\n");
-                return -1;
+            if (tokens[i + 1] != NULL) {
+                *output_file = tokens[++i];
             }
-
-            *output_file = tokens[++i];
         }
 
         else {
-            argv[argc++] = tokens[i];
+            args[j++] = tokens[i];
         }
     }
 
-    argv[argc] = NULL;
-
-    if (argc == 0) {
-        fprintf(stderr, "Missing command.\n");
-        return -1;
-    }
-
-    return argc;
+    args[j] = NULL;
 }
 
-
-// Apply redirection
-int apply_redirection(char* input_file, char* output_file) {
-
-    int fd;
+void apply_redirection(char* input_file, char* output_file) {
 
     if (input_file != NULL) {
-
-        fd = open(input_file, O_RDONLY);
+        int fd = open(input_file, O_RDONLY);
 
         if (fd < 0) {
-            perror("Input file");
-            return -1;
+            perror("Input redirection");
+            exit(1);
         }
 
-        if (dup2(fd, STDIN_FILENO) < 0) {
-            perror("dup2");
-            close(fd);
-            return -1;
-        }
-
+        dup2(fd, STDIN_FILENO);
         close(fd);
     }
 
     if (output_file != NULL) {
-
-        fd = open(output_file,
-                  O_WRONLY | O_CREAT | O_TRUNC,
-                  0644);
+        int fd = open(
+            output_file,
+            O_WRONLY | O_CREAT | O_TRUNC,
+            0644
+        );
 
         if (fd < 0) {
-            perror("Output file");
-            return -1;
+            perror("Output redirection");
+            exit(1);
         }
 
-        if (dup2(fd, STDOUT_FILENO) < 0) {
-            perror("dup2");
-            close(fd);
-            return -1;
-        }
-
+        dup2(fd, STDOUT_FILENO);
         close(fd);
     }
-
-    return 0;
 }
 
+int get_status(int status) {
 
-// Execute command
-int execute(char** arglist, int background, char* command) {
-
-    int total = 0;
-    int pipe_index = -1;
-
-    while (arglist[total] != NULL) {
-
-        if (strcmp(arglist[total], "|") == 0) {
-
-            if (pipe_index != -1) {
-                fprintf(stderr, "Only one pipe is supported.\n");
-                return -1;
-            }
-
-            pipe_index = total;
-        }
-
-        total++;
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
     }
 
+    if (WIFSIGNALED(status)) {
+        return 128 + WTERMSIG(status);
+    }
 
-    // Command without pipe
-    if (pipe_index == -1) {
+    return 1;
+}
 
-        char* argv[MAXARGS + 1];
+int wait_for_process(pid_t pid) {
+
+    int status;
+
+    while (waitpid(pid, &status, 0) == -1) {
+
+        if (errno != EINTR) {
+            perror("waitpid");
+            return 1;
+        }
+    }
+
+    return get_status(status);
+}
+
+int execute(char** arglist, int background, char* command) {
+
+    int pipe_position = -1;
+
+    for (int i = 0; arglist[i] != NULL; i++) {
+
+        if (strcmp(arglist[i], "|") == 0) {
+            pipe_position = i;
+            break;
+        }
+    }
+
+    /* Normal command without pipe */
+
+    if (pipe_position == -1) {
+
+        char* args[MAXARGS + 1];
         char* input_file;
         char* output_file;
 
-        if (parse_command(arglist, 0, total,
-                          argv, &input_file,
-                          &output_file) < 0) {
-            return -1;
+        parse_command(
+            arglist,
+            args,
+            &input_file,
+            &output_file
+        );
+
+        if (args[0] == NULL) {
+            return 0;
         }
 
         pid_t pid = fork();
 
         if (pid < 0) {
             perror("fork");
-            return -1;
+            return 1;
         }
 
         if (pid == 0) {
 
-            if (apply_redirection(input_file, output_file) < 0) {
-                _exit(1);
-            }
+            apply_redirection(input_file, output_file);
 
-            execvp(argv[0], argv);
+            execvp(args[0], args);
 
             perror("Command execution failed");
-            _exit(1);
+            exit(127);
         }
 
-        // Background execution
         if (background) {
 
             add_job(pid, command);
+
             return 0;
         }
 
-        // Foreground execution
-        int status;
-
-        while (waitpid(pid, &status, 0) < 0) {
-
-            if (errno != EINTR) {
-                perror("waitpid");
-                break;
-            }
-        }
-
-        return 0;
+        return wait_for_process(pid);
     }
 
+    /* Command with one pipe */
 
-    // Pipe handling
-    if (pipe_index == 0 || pipe_index == total - 1) {
-        fprintf(stderr, "Invalid pipe command.\n");
-        return -1;
+    char* left_tokens[MAXARGS + 1];
+    char* right_tokens[MAXARGS + 1];
+
+    int i;
+
+    for (i = 0; i < pipe_position; i++) {
+        left_tokens[i] = arglist[i];
     }
 
-    char* left_argv[MAXARGS + 1];
-    char* right_argv[MAXARGS + 1];
+    left_tokens[i] = NULL;
+
+    int j = 0;
+
+    for (i = pipe_position + 1; arglist[i] != NULL; i++) {
+        right_tokens[j++] = arglist[i];
+    }
+
+    right_tokens[j] = NULL;
+
+    char* left_args[MAXARGS + 1];
+    char* right_args[MAXARGS + 1];
 
     char* left_input;
     char* left_output;
+
     char* right_input;
     char* right_output;
 
-    if (parse_command(arglist, 0, pipe_index,
-                      left_argv, &left_input,
-                      &left_output) < 0) {
-        return -1;
-    }
+    parse_command(
+        left_tokens,
+        left_args,
+        &left_input,
+        &left_output
+    );
 
-    if (parse_command(arglist, pipe_index + 1, total,
-                      right_argv, &right_input,
-                      &right_output) < 0) {
-        return -1;
-    }
+    parse_command(
+        right_tokens,
+        right_args,
+        &right_input,
+        &right_output
+    );
 
     int fd[2];
 
-    if (pipe(fd) < 0) {
+    if (pipe(fd) == -1) {
         perror("pipe");
-        return -1;
+        return 1;
     }
 
-    pid_t left_pid = fork();
+    pid_t pid1 = fork();
 
-    if (left_pid < 0) {
+    if (pid1 < 0) {
         perror("fork");
         close(fd[0]);
         close(fd[1]);
-        return -1;
+        return 1;
     }
 
-    if (left_pid == 0) {
+    if (pid1 == 0) {
 
         close(fd[0]);
 
-        if (dup2(fd[1], STDOUT_FILENO) < 0) {
-            perror("dup2");
-            _exit(1);
-        }
+        dup2(fd[1], STDOUT_FILENO);
 
         close(fd[1]);
 
-        if (apply_redirection(left_input, left_output) < 0) {
-            _exit(1);
-        }
+        apply_redirection(left_input, left_output);
 
-        execvp(left_argv[0], left_argv);
+        execvp(left_args[0], left_args);
 
         perror("Command execution failed");
-        _exit(1);
+        exit(127);
     }
 
+    pid_t pid2 = fork();
 
-    pid_t right_pid = fork();
-
-    if (right_pid < 0) {
-
+    if (pid2 < 0) {
         perror("fork");
 
         close(fd[0]);
         close(fd[1]);
 
-        waitpid(left_pid, NULL, 0);
+        wait_for_process(pid1);
 
-        return -1;
+        return 1;
     }
 
-    if (right_pid == 0) {
+    if (pid2 == 0) {
 
         close(fd[1]);
 
-        if (dup2(fd[0], STDIN_FILENO) < 0) {
-            perror("dup2");
-            _exit(1);
-        }
+        dup2(fd[0], STDIN_FILENO);
 
         close(fd[0]);
 
-        if (apply_redirection(right_input, right_output) < 0) {
-            _exit(1);
-        }
+        apply_redirection(right_input, right_output);
 
-        execvp(right_argv[0], right_argv);
+        execvp(right_args[0], right_args);
 
         perror("Command execution failed");
-        _exit(1);
+        exit(127);
     }
 
     close(fd[0]);
     close(fd[1]);
 
-    // Background pipe: track both child processes
     if (background) {
 
-        add_job(left_pid, command);
-        add_job(right_pid, command);
+        add_job(pid1, command);
+        add_job(pid2, command);
 
         return 0;
     }
 
-    // Foreground pipe: wait for both
-    waitpid(left_pid, NULL, 0);
-    waitpid(right_pid, NULL, 0);
+    wait_for_process(pid1);
 
-    return 0;
+    return wait_for_process(pid2);
 }
