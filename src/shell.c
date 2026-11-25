@@ -195,6 +195,7 @@ void print_history(void) {
 
 
 // Handle built-in commands
+
 int handle_builtin(char** arglist) {
 
     if (arglist == NULL || arglist[0] == NULL) {
@@ -231,7 +232,7 @@ int handle_builtin(char** arglist) {
         printf("  help       - Display help\n");
         printf("  jobs       - Display background jobs\n");
         printf("  history    - Display command history\n");
-
+printf("  set        - Display shell variables\n");
         return 1;
     }
 
